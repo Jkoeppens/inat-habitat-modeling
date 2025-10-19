@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.ipynb_checkpoints
+*.env
+*.DS_Store
+.env
+.vscode/
+.idea/
+
+# Colab / temporäre Daten
+*.ipynb
+*.tif
+*.csv
+*.pdf
+*.geojson
+*.shp
+*.json
+*.log
+.ndvi_cache/
+output/
+drive/

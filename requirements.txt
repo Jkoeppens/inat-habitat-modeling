@@ -1,0 +1,20 @@
+# 🗺️ Geo + Daten
+pandas>=1.5
+geopandas>=0.12
+shapely
+numpy
+
+# 🔍 iNaturalist API
+requests
+
+# 📊 Visualisierung
+folium
+matplotlib
+
+# 🛰️ Google Earth Engine API
+earthengine-api>=0.1.311
+# Optional (Notebook-Mapping)
+geemap
+
+# 💻 Optional für Colab (z. B. Google Drive Zugriff)
+google-colab
