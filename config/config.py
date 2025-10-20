@@ -53,6 +53,8 @@ def load_config(
     config = resolve_placeholders(config)
     return config
 
+print("🔍 Geladene Default-Config:")
+print(config)
 
 # ✅ Direkt beim Import laden
 CONFIG = load_config()
