@@ -4,6 +4,7 @@ import yaml
 import os
 from pathlib import Path
 import re
+import os
 
 
 # 🔁 Rekursives Dictionary-Merge
@@ -37,7 +38,7 @@ def resolve_placeholders(config):
 # 📦 Konfiguration laden
 
 def load_config(
-    default_path="/content/inatrualist/config/default.yaml",
+    default_path = os.path.join(os.path.dirname(__file__), "default.yaml"),
     local_path="/content/drive/MyDrive/iNaturalist/local.yaml"
 ):
     with open(default_path, "r") as f:
