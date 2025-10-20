@@ -1,16 +1,27 @@
-# /pipe/setup_colab.py
+# setup_colab.py
 
-import sys
 import os
+import sys
 
-def setup_repo(base_path="/content/inaturalist"):
-    """
-    Fügt das Repo-Verzeichnis zum sys.path hinzu, damit Module importierbar sind.
-    """
-    if base_path not in sys.path:
-        sys.path.append(base_path)
+from google.colab import drive
+from config.config import load_config
 
-    if not os.path.exists(base_path):
-        raise FileNotFoundError(f"📁 Repo-Verzeichnis nicht gefunden: {base_path}")
+def setup_colab():
+    # 📂 Google Drive einbinden
+    drive.mount('/content/drive')
 
-    print(f"✅ Repo-Pfad gesetzt: {base_path}")
+    # 🛠️ Projektpfad setzen (wenn Repo geklont ist)
+    repo_path = "/content/inaturalist"
+    if repo_path not in sys.path:
+        sys.path.append(repo_path)
+
+    # 📜 Konfiguration laden
+    cfg = load_config("/content/drive/MyDrive/iNaturalist/local.yaml")
+
+    # 🔍 Übersicht ausgeben
+    print("\n✅ Konfiguration geladen.")
+    print(f"\n📁 Projektname: {cfg['project']['name']}")
+    print(f"📂 Basisverzeichnis: {cfg['data']['base_dir']}")
+    print(f"📦 NDVI-Verzeichnis: {cfg['data']['raster_dirs']['NDVI']}")
+
+    return cfg
