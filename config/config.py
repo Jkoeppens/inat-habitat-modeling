@@ -37,7 +37,7 @@ def resolve_placeholders(config):
 # 📦 Konfiguration laden
 
 def load_config(
-    default_path="/config/default.yaml",
+    default_path="/content/inatrualist/config/default.yaml",
     local_path="/content/drive/MyDrive/iNaturalist/local.yaml"
 ):
     with open(default_path, "r") as f:
