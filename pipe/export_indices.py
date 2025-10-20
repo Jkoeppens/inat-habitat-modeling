@@ -1,8 +1,11 @@
-# export_ndvi_ndwi.py
-
 import ee
+from config.config import cfg
 
-def init_gee(project_id='inaturalist-474012'):
+def init_gee(project_id=None):
+    """
+    Initialisiert Google Earth Engine mit optionalem Projekt.
+    """
+    project_id = project_id or cfg["gee"]["default_project"]
     try:
         ee.Initialize(project=project_id)
         print(f"✅ Earth Engine initialisiert mit Projekt: {project_id}")
@@ -11,12 +14,10 @@ def init_gee(project_id='inaturalist-474012'):
         ee.Initialize(project=project_id)
         print(f"🔑 Authentifizierung erfolgreich mit Projekt: {project_id}")
 
-
 def mask_scl(img):
     scl = img.select('SCL')
-    mask = scl.eq(4).Or(scl.eq(5)).Or(scl.eq(6))
+    mask = scl.eq(4).Or(scl.eq(5)).Or(scl.eq(6))  # Vegetation, Boden, Wasser
     return img.updateMask(mask)
-
 
 def compute_index(img, index):
     if index == 'NDVI':
@@ -25,7 +26,6 @@ def compute_index(img, index):
         return img.normalizedDifference(['B3', 'B8']).rename('NDWI')
     else:
         raise ValueError("Index muss 'NDVI' oder 'NDWI' sein")
-
 
 def get_monthly_index(year, month, region, index):
     start = ee.Date.fromYMD(year, month, 1)
@@ -40,9 +40,26 @@ def get_monthly_index(year, month, region, index):
 
     return col.select(index).median().clip(region)
 
+def export_monthly_index(year=None, months=None, region=None, index='NDVI', folder=None):
+    """
+    Exportiert monatliche Mittelwerte von NDVI/NDWI für eine Region aus GEE nach Google Drive.
 
-def export_monthly_index(year, months, region, index='NDVI', folder=None):
-    folder = folder or f"{index}_Exports"
+    Parameter:
+        - year: Jahr (z. B. 2023)
+        - months: Liste von Monaten
+        - region: ee.Geometry (oder None → Standard aus cfg)
+        - index: 'NDVI' oder 'NDWI'
+        - folder: Zielordner auf Drive (optional, sonst aus cfg)
+    """
+    year = year or cfg["export"]["start_year"]
+    months = months or cfg["export"]["months"]
+    folder = folder or cfg["data"]["raster_dirs"][index]
+
+    # Region aus cfg laden falls nicht übergeben
+    if region is None:
+        bbox = cfg["inat"]["bbox_default"]
+        region = ee.Geometry.Rectangle(bbox)
+
     for m in months:
         image = get_monthly_index(year, m, region, index)
         description = f"{index}_BerlinBB_{year}_{m:02d}"
@@ -52,23 +69,9 @@ def export_monthly_index(year, months, region, index='NDVI', folder=None):
             folder=folder,
             fileNamePrefix=description,
             region=region.coordinates().getInfo(),
-            scale=10,
+            scale=cfg["export"]["scale"],
             crs='EPSG:4326',
-            maxPixels=1e13
+            maxPixels=int(cfg["export"]["max_pixels"])
         )
         task.start()
         print(f"🚀 Export gestartet: {description}")
-
-
-# Beispiel zur Nutzung
-if __name__ == "__main__":
-    init_gee()
-
-    # Region: Berlin + Brandenburg
-    geometry = ee.Geometry.Rectangle([12.8, 52.2, 13.8, 52.8])
-
-    year = 2023
-    months = [6, 7, 8, 9]  # Beispielmonate
-
-    export_monthly_index(year, months, geometry, index='NDVI')
-    export_monthly_index(year, months, geometry, index='NDWI')

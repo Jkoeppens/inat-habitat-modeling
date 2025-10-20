@@ -1,0 +1,29 @@
+project:
+  name: inat-habitat-modeling
+  description: "Modellierung von Habitaten basierend auf iNaturalist + RS-Daten"
+  author: Jakob Koeppen
+
+data:
+  base_dir: "/content/drive/MyDrive/iNaturalist"
+  features_subdir: "features"
+  background_subdir: "background"
+  combined_subdir: "combined"
+  raster_dirs:
+    NDVI: "NDVI_Exports"
+    NDWI: "NDWI_Exports"
+
+inat:
+  default_taxon: clitocybe_nebularis
+  default_taxon_id: 48596
+  max_accuracy: 30
+  bbox_default: [12.5, 51.5, 14.5, 53.5]
+
+feature_extraction:
+  lag_months: 1
+  buffer_m: 100
+  use_artifacts: true
+  include_metrics: [NDVI, NDWI, NDVI_STD, NDWI_STD, NDVI_MORAN, NDWI_MORAN, NDVI_GEARY, NDWI_GEARY]
+
+labels:
+  fund: 1
+  background: 0
