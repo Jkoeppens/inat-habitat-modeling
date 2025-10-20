@@ -1,4 +1,4 @@
-# artefact_generator_refactored.py – robuste NDVI/NDWI-Artefakt-Berechnung
+# artefact_generator.py – robuste NDVI/NDWI-Artefakt-Berechnung
 # Version: 2025-10 – Colab-kompatibel mit Geary-Fallback & Stichprobenmodus
 
 import os
