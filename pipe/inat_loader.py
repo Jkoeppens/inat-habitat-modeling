@@ -4,6 +4,8 @@ import geopandas as gpd
 from shapely.geometry import Point
 import time
 import re
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from config.config import cfg  # zentrale Konfiguration
 

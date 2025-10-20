@@ -6,6 +6,9 @@ from shapely import wkt
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 
 def run_eda(path):
     df = pd.read_csv(path)

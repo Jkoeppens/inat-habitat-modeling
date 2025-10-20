@@ -1,4 +1,7 @@
 import ee
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from config.config import cfg
 
 def init_gee(project_id=None):

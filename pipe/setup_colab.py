@@ -4,6 +4,9 @@ import os
 import sys
 
 from google.colab import drive
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from config.config import load_config
 
 def setup_colab():
@@ -25,4 +28,3 @@ def setup_colab():
     print(f"📦 NDVI-Verzeichnis: {cfg['data']['raster_dirs']['NDVI']}")
 
     return cfg
-    

@@ -8,6 +8,9 @@ from scipy.ndimage import generic_filter
 from libpysal.weights import lat2W
 from esda import Moran_Local, Geary_Local
 from tqdm import tqdm
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 
 from config.config import cfg
 

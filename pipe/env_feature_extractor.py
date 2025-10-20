@@ -7,6 +7,9 @@ from shapely import wkt
 from rasterstats import point_query
 from tqdm import tqdm
 import numpy as np
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 
 def extract_environmental_features(csv_in, ndvi_dir, ndwi_dir, out_csv):
     df = pd.read_csv(csv_in)

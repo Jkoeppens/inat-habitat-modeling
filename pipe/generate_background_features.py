@@ -4,7 +4,9 @@ import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
 import numpy as np
-import os
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 
 # 📥 Fundpunkte laden
 taxon_name = "Clitocybe nebularis"

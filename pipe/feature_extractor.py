@@ -5,6 +5,9 @@ import re
 import rasterio
 import numpy as np
 import pandas as pd
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from shapely.geometry import Point
 from rasterio.windows import from_bounds
 
