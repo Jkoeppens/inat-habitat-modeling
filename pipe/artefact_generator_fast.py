@@ -3,7 +3,7 @@
 # ============================================================
 
 import os, sys, datetime, traceback, psutil, numpy as np, rasterio
-from rasterio.enums import BigTiff
+#from rasterio.enums import BigTiff
 from scipy.ndimage import generic_filter
 from libpysal.weights import lat2W
 from esda import Moran_Local
