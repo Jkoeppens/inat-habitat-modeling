@@ -1,50 +1,103 @@
-# env_feature_extractor.py – Punktweise Extraktion von Umwelt-Artefakten
+# ============================================================
+# 📘 env_feature_extractor.py
+# Version: 2025-10 | Nur Lesemodus – ergänzt NDVI/NDWI + Artefaktwerte
+# ============================================================
 
 import os
-import pandas as pd
-import geopandas as gpd
-from shapely import wkt
-from rasterstats import point_query
-from tqdm import tqdm
+import rasterio
 import numpy as np
-import sys, os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import pandas as pd
+from tqdm import tqdm
+from datetime import datetime
+from glob import glob
+
+# ------------------------------------------------------------
+# Hilfsfunktionen
+# ------------------------------------------------------------
+
+def find_raster(base_dir, prefix, year, month):
+    """
+    Findet Rasterdateien wie NDVI_BerlinBB_2021_05.tif oder NDVI_STD_2021_05.tif
+    """
+    pattern = f"{prefix}_*{year}_{str(month).zfill(2)}*.tif"
+    files = sorted(glob(os.path.join(base_dir, pattern)))
+    return files[0] if files else None
 
 
-def extract_environmental_features(csv_in, ndvi_dir, ndwi_dir, out_csv):
-    df = pd.read_csv(csv_in)
-    df["geometry"] = df["geometry"].apply(wkt.loads)
-    gdf = gpd.GeoDataFrame(df, geometry="geometry", crs="EPSG:4326")
+def read_raster_value(raster_path, lon, lat):
+    """
+    Liest den Pixelwert eines Raster-TIFs an einer gegebenen Koordinate.
+    """
+    if raster_path is None or not os.path.exists(raster_path):
+        return np.nan
+    try:
+        with rasterio.open(raster_path) as src:
+            row, col = src.index(lon, lat)
+            val = src.read(1)[row, col]
+            if val == src.nodata:
+                return np.nan
+            return float(val)
+    except Exception:
+        return np.nan
 
-    for col in [
-        "NDVI_std_100m", "NDWI_std_100m",
-        "Moran_I_local", "Geary_C_local",
-        "NDWI_Moran_I_local", "NDWI_Geary_C_local"
-    ]:
-        gdf[col] = np.nan
 
-    months = sorted(gdf["source_month"].dropna().unique())
-    print(f"📅 Verarbeite Monate: {months}")
+def extract_features(cfg):
+    """
+    Ergänzt Beobachtungsdaten (Pilze, Meisen) um NDVI/NDWI + Artefaktwerte.
+    Erwartet: inaturalist_combined.csv im output_dir.
+    """
 
-    for month in tqdm(months):
-        subset = gdf[gdf["source_month"] == month].copy()
-        if subset.empty:
-            continue
+    base_dir = cfg["paths"]["base_data_dir"]
+    out_dir = cfg["paths"]["output_dir"]
 
-        def try_extract(path, column):
-            if os.path.exists(path):
-                vals = point_query(subset, path)
-                gdf.loc[subset.index, column] = vals
+    ndvi_dir = cfg["paths"]["ndvi_dir"]
+    ndwi_dir = cfg["paths"]["ndwi_dir"]
 
-        # NDVI
-        try_extract(os.path.join(ndvi_dir, f"NDVI_STD_{month}.tif"), "NDVI_std_100m")
-        try_extract(os.path.join(ndvi_dir, f"NDVI_MORAN_{month}.tif"), "Moran_I_local")
-        try_extract(os.path.join(ndvi_dir, f"NDVI_GEARY_{month}.tif"), "Geary_C_local")
+    infile = os.path.join(out_dir, "inaturalist_combined.csv")
+    if not os.path.exists(infile):
+        raise FileNotFoundError(f"❌ {infile} fehlt – bitte zuerst inat_loader ausführen!")
 
-        # NDWI
-        try_extract(os.path.join(ndwi_dir, f"NDWI_STD_{month}.tif"), "NDWI_std_100m")
-        try_extract(os.path.join(ndwi_dir, f"NDWI_MORAN_{month}.tif"), "NDWI_Moran_I_local")
-        try_extract(os.path.join(ndwi_dir, f"NDWI_GEARY_{month}.tif"), "NDWI_Geary_C_local")
+    df = pd.read_csv(infile)
+    df["date"] = pd.to_datetime(df["date"])
 
-    gdf.to_csv(out_csv, index=False)
-    print(f"\n✅ Ergebnisse gespeichert unter: {out_csv}")
+    results = []
+    for i, row in tqdm(df.iterrows(), total=len(df), desc="🔍 Extrahiere Umweltwerte"):
+        lat, lon = row["latitude"], row["longitude"]
+        year, month = row["date"].year, row["date"].month
+
+        ndvi_file = find_raster(ndvi_dir, "NDVI", year, month)
+        ndwi_file = find_raster(ndwi_dir, "NDWI", year, month)
+
+        # Artefakt-Raster prüfen
+        ndvi_std = find_raster(ndvi_dir, "NDVI_STD", year, month)
+        ndvi_moran = find_raster(ndvi_dir, "NDVI_MORAN", year, month)
+        ndvi_geary = find_raster(ndvi_dir, "NDVI_GEARY", year, month)
+
+        ndwi_std = find_raster(ndwi_dir, "NDWI_STD", year, month)
+        ndwi_moran = find_raster(ndwi_dir, "NDWI_MORAN", year, month)
+        ndwi_geary = find_raster(ndwi_dir, "NDWI_GEARY", year, month)
+
+        vals = {
+            "latitude": lat,
+            "longitude": lon,
+            "date": row["date"].strftime("%Y-%m-%d"),
+            "species": row["species"],
+            "NDVI": read_raster_value(ndvi_file, lon, lat),
+            "NDWI": read_raster_value(ndwi_file, lon, lat),
+            "NDVI_STD": read_raster_value(ndvi_std, lon, lat),
+            "NDVI_MORAN": read_raster_value(ndvi_moran, lon, lat),
+            "NDVI_GEARY": read_raster_value(ndvi_geary, lon, lat),
+            "NDWI_STD": read_raster_value(ndwi_std, lon, lat),
+            "NDWI_MORAN": read_raster_value(ndwi_moran, lon, lat),
+            "NDWI_GEARY": read_raster_value(ndwi_geary, lon, lat),
+        }
+        results.append(vals)
+
+    df_out = pd.DataFrame(results)
+
+    outfile = os.path.join(out_dir, "inaturalist_features.csv")
+    df_out.to_csv(outfile, index=False)
+    print(f"\n✅ Features gespeichert: {outfile}")
+    print(df_out.describe(include='all'))
+
+    return df_out
