@@ -1,154 +1,144 @@
-# artefact_generator_fast.py – optimierte, BigTIFF-fähige & resumable Artefakterzeugung
+# ============================================================
+# artefact_generator_fast.py (robuste Version mit Diagnose & Fortsetzung)
+# ============================================================
 
-import os
-import numpy as np
-import rasterio
+import os, sys, datetime, traceback, psutil, numpy as np, rasterio
+from rasterio.enums import BigTiff
+from scipy.ndimage import generic_filter
 from libpysal.weights import lat2W
 from esda import Moran_Local
 from tqdm import tqdm
-import datetime
-from numba import njit, prange
-import sys
+from numba import njit
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from config.config import cfg
 
 
-# === 🪵 Logging ===
+# === 🧠 Helferfunktionen ===
 def log(msg):
+    ts = datetime.datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+    print(f"{ts} {msg}")
     log_dir = os.path.join(cfg["data"]["base_dir"], "logs")
     os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, "artefact_run.log")
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{timestamp}] {msg}"
-    print(line)
-    with open(log_path, "a") as f:
-        f.write(line + "\n")
+    with open(os.path.join(log_dir, "artefact_run.log"), "a") as f:
+        f.write(f"{ts} {msg}\n")
 
 
-# === ⚡ Numba-beschleunigte lokale STD ===
+def safe_step(func, step_name):
+    """Führt Schritt sicher aus, protokolliert Fehler + Systemzustand."""
+    try:
+        log(f"▶️ Starte Schritt: {step_name}")
+        result = func()
+        log(f"✅ Erfolgreich: {step_name}")
+        return result
+    except Exception as e:
+        tb = traceback.format_exc()
+        log(f"❌ Fehler in Schritt '{step_name}': {e}\n{tb}")
+        ram = psutil.virtual_memory().percent
+        cpu = psutil.cpu_percent(interval=1)
+        log(f"🧠 RAM={ram}% | CPU={cpu}% | Zeitpunkt={datetime.datetime.now()}")
+        return None
+
+
+def save_raster(out_path, profile, data):
+    """Speichert Raster sicher mit BigTIFF-Fallback."""
+    meta = profile.copy()
+    meta.update(dtype="float32", count=1, compress="lzw", BIGTIFF="IF_NEEDED")
+    with rasterio.open(out_path, "w", **meta) as dst:
+        dst.write(data.astype("float32"), 1)
+
+
+# === 🧮 Beschleunigte lokale STD mit Numba ===
 @njit(parallel=True)
-def local_std_numba(arr, size):
-    h = size // 2
-    out = np.full_like(arr, np.nan, dtype=np.float32)
-    for i in prange(h, arr.shape[0] - h):
-        for j in range(h, arr.shape[1] - h):
-            window = arr[i - h:i + h + 1, j - h:j + h + 1].ravel()
-            valid = window[~np.isnan(window)]
-            if valid.size > 1:
-                mean = valid.mean()
-                out[i, j] = np.sqrt(((valid - mean) ** 2).sum() / (valid.size - 1))
+def local_std_numba(arr, size=11):
+    pad = size // 2
+    padded = np.pad(arr, pad, mode="reflect")
+    out = np.zeros_like(arr)
+    for i in range(arr.shape[0]):
+        for j in range(arr.shape[1]):
+            win = padded[i:i+size, j:j+size]
+            m = np.mean(win)
+            out[i, j] = np.sqrt(np.mean((win - m) ** 2))
     return out
 
 
-# === 🔍 Welche Artefakte fehlen? ===
-def artefacts_missing(index):
-    base_path = os.path.join(cfg["data"]["base_dir"], cfg["data"]["raster_dirs"][index])
-    all_rasters = [f for f in os.listdir(base_path) if f.endswith(".tif") and f"{index}_BerlinBB" in f]
-    missing = []
-    for raster in all_rasters:
-        month_tag = "_".join(raster.split("_")[-2:]).replace(".tif", "")
-        needed = [
-            f"{index}_STD_{month_tag}.tif",
-            f"{index}_MORAN_{month_tag}.tif",
-            f"{index}_GEARY_{month_tag}.tif"
-        ]
-        if not all(os.path.exists(os.path.join(base_path, n)) for n in needed):
-            missing.append(os.path.join(base_path, raster))
-    return missing
-
-
-# === 💾 Speicherintelligentes Raster-Writer ===
-def save_raster(out_path, profile, data):
-    meta = profile.copy()
-
-    # Schätze Dateigröße (float32 = 4 Byte pro Pixel)
-    est_gb = data.size * 4 / 1e9
-    bigtiff = "YES" if est_gb > 3 else "IF_NEEDED"
-
-    # Wertebereich auf [-1, 1] clippen, um float16 zu ermöglichen
-    clipped = np.clip(data, -1, 1)
-    dtype = "float32" if np.nanmax(np.abs(clipped)) <= 1 else "float32"
-    compressed = clipped.astype(dtype)
-
-    meta.update(
-        dtype=dtype,
-        count=1,
-        compress="lzw",
-        BIGTIFF=bigtiff
-    )
-
-    log(f"  💾 Speichere Raster: {os.path.basename(out_path)} "
-        f"({dtype}, ~{est_gb:.2f} GB, BigTIFF={bigtiff})")
-
-    with rasterio.open(out_path, "w", **meta) as dst:
-        dst.write(compressed, 1)
-
-
-# === 🧮 Hauptfunktion ===
+# === 🧩 Hauptfunktion ===
 def generate_environmental_artefacts_fast(block_size=1024, std_size=11, downsample=5):
-    indices = ["NDVI", "NDWI"]
-    for index in indices:
-        dir_path = os.path.join(cfg["data"]["base_dir"], cfg["data"]["raster_dirs"][index])
+    base = cfg["data"]["base_dir"]
+    dirs = cfg["data"]["raster_dirs"]
+
+    for index, rel_dir in dirs.items():
+        dir_path = os.path.join(base, rel_dir)
         os.makedirs(dir_path, exist_ok=True)
 
-        missing = artefacts_missing(index)
-        log(f"📂 {index}: {len(missing)} Raster ohne vollständige Artefakte")
+        all_rasters = sorted([
+            os.path.join(dir_path, f) for f in os.listdir(dir_path)
+            if f.endswith(".tif") and index in f and "STD" not in f
+        ])
 
-        for raster_path in tqdm(missing, desc=f"{index}-Analyse"):
-            base = os.path.basename(raster_path)
-            month_tag = "_".join(base.split("_")[-2:]).replace(".tif", "")
+        # === Überspringe bereits vollständige Artefakte ===
+        todo = []
+        for path in all_rasters:
+            name = os.path.basename(path)
+            month_tag = "_".join(name.split("_")[-2:]).replace(".tif", "")
+            std_file = os.path.join(dir_path, f"{index}_STD_{month_tag}.tif")
+            mor_file = os.path.join(dir_path, f"{index}_MORAN_{month_tag}.tif")
+            gea_file = os.path.join(dir_path, f"{index}_GEARY_{month_tag}.tif")
+            if not (os.path.exists(std_file) and os.path.exists(mor_file) and os.path.exists(gea_file)):
+                todo.append(path)
+
+        log(f"📂 {index}: {len(todo)} Raster ohne vollständige Artefakte")
+
+        for path in tqdm(todo, desc=f"{index}-Analyse"):
+            base_name = os.path.basename(path)
+            month_tag = "_".join(base_name.split("_")[-2:]).replace(".tif", "")
             log(f"\n🧮 Verarbeite {index} → {month_tag}")
 
-            # === Raster laden ===
-            with rasterio.open(raster_path) as src:
+            with rasterio.open(path) as src:
                 arr = src.read(1).astype("float32")
                 prof = src.profile
                 arr[arr == src.nodata] = np.nan
 
-            # === Lokale STD berechnen (blockweise) ===
-            log("  • Berechne lokale STD (Numba + Blockweise)...")
-            h, w = arr.shape
-            std_map = np.full_like(arr, np.nan, dtype=np.float32)
+            # === Lokale STD ===
+            std_map = safe_step(lambda: local_std_numba(arr, size=std_size), "Lokale STD")
+            if std_map is None:
+                log("⚠️ STD-Berechnung übersprungen. Weiter mit nächstem Raster.")
+                continue
 
-            for i in range(0, h, block_size):
-                for j in range(0, w, block_size):
-                    block = arr[i:i + block_size, j:j + block_size]
-                    std_map[i:i + block.shape[0], j:j + block.shape[1]] = local_std_numba(block, size=std_size)
+            out_std = os.path.join(dir_path, f"{index}_STD_{month_tag}.tif")
+            safe_step(lambda: save_raster(out_std, prof, std_map), "STD speichern")
 
-            save_raster(os.path.join(dir_path, f"{index}_STD_{month_tag}.tif"), prof, std_map)
-            log(f"  ✅ STD gespeichert: {month_tag}")
+            # === Moran & Geary (Downsample) ===
+            def moran_geary():
+                sub_arr = arr[::downsample, ::downsample]
+                sub_arr[np.isnan(sub_arr)] = 0
+                w = lat2W(*sub_arr.shape)
+                w.transform = "r"
+                moran = Moran_Local(sub_arr.ravel(), w)
+                moran_map = np.repeat(np.repeat(moran.Is.reshape(sub_arr.shape), downsample, 0), downsample, 1)
+                moran_map = moran_map[:arr.shape[0], :arr.shape[1]]
 
-            # === Moran & Geary (downsampled) ===
-            log("  • Berechne Moran & Geary (Downsample)...")
-            sub_arr = arr[::downsample, ::downsample]
-            sub_arr[np.isnan(sub_arr)] = 0
-            w_obj = lat2W(*sub_arr.shape)
-            w_obj.transform = "r"
+                # vereinfachte Geary-Schätzung
+                mu = np.mean(sub_arr)
+                var = np.var(sub_arr)
+                diffs = (sub_arr - mu)
+                N = sub_arr.size
+                W = np.sum(list(w.weights.values()))
+                geary_val = (N - 1) / (2 * W) * np.sum([w_i * np.mean((diffs[i] - diffs)**2)
+                                                       for i, w_i in enumerate(w.weights.values())]) / var
+                geary_map = np.full_like(sub_arr, geary_val)
+                geary_map = np.repeat(np.repeat(geary_map, downsample, 0), downsample, 1)
+                geary_map = geary_map[:arr.shape[0], :arr.shape[1]]
+                return moran_map, geary_map
 
-            # Moran Local
-            moran = Moran_Local(sub_arr.ravel(), w_obj)
-            moran_map = np.repeat(np.repeat(moran.Is.reshape(sub_arr.shape), downsample, axis=0), downsample, axis=1)
-            moran_map = moran_map[:arr.shape[0], :arr.shape[1]]
+            result = safe_step(moran_geary, "Moran & Geary")
+            if result is None:
+                continue
 
-            # Geary Fallback
-            try:
-                from esda import Geary_Local
-                geary = Geary_Local(sub_arr.ravel(), w_obj)
-                geary_values = getattr(geary, "geary_local", getattr(geary, "Cs", None))
-                if geary_values is None:
-                    raise AttributeError
-                geary_map = np.repeat(np.repeat(geary_values.reshape(sub_arr.shape), downsample, axis=0), downsample, axis=1)
-                log("  ✅ Geary_Local (standard) verwendet.")
-            except Exception:
-                from scipy.ndimage import uniform_filter
-                log("  ⚠️ Fallback: manuelle Geary-Berechnung ...")
-                mean = uniform_filter(sub_arr, size=3)
-                diff = (sub_arr - mean) ** 2
-                geary_map = diff / np.nanmean(diff)
-                geary_map = np.repeat(np.repeat(geary_map, downsample, axis=0), downsample, axis=1)
+            moran_map, geary_map = result
+            out_moran = os.path.join(dir_path, f"{index}_MORAN_{month_tag}.tif")
+            out_geary = os.path.join(dir_path, f"{index}_GEARY_{month_tag}.tif")
 
-            save_raster(os.path.join(dir_path, f"{index}_MORAN_{month_tag}.tif"), prof, moran_map)
-            save_raster(os.path.join(dir_path, f"{index}_GEARY_{month_tag}.tif"), prof, geary_map)
-            log(f"  ✅ MORAN & GEARY gespeichert: {month_tag}")
+            safe_step(lambda: save_raster(out_moran, prof, moran_map), "Moran speichern")
+            safe_step(lambda: save_raster(out_geary, prof, geary_map), "Geary speichern")
 
     log("\n🏁 Fertig! Alle Artefakte berechnet.")
