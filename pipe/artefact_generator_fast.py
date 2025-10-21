@@ -1,130 +1,111 @@
-# artefact_generator_fast.py – stabile Version (2025-10)
-# Robust gegen Drive-I/O, speichert zuerst lokal, dann Kopie zu Drive.
-# Unterstützt Resume, KeepAlive & progress logging.
+# ============================================================
+# ⚡ artefact_generator_fast.py
+# Version: 2025-10 | Unterstützt Einzelfallberechnung & Blockmodus
+# ============================================================
 
-import os
-import shutil
-import time
-import datetime
-import numpy as np
-import rasterio
+import os, time, numpy as np, rasterio
+from tqdm import tqdm
 from scipy.ndimage import generic_filter
 from libpysal.weights import lat2W
-from esda import Moran_Local
-from tqdm import tqdm
-import psutil, traceback, sys
+from esda import Moran_Local, Geary_Local
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from config.config import cfg
-
-
-# === 🧠 Hilfsfunktionen ===
+# ------------------------------------------------------------
+# Hilfsfunktionen
+# ------------------------------------------------------------
 
 def local_std(arr, size=11):
-    """Blockweise lokale Standardabweichung."""
-    return generic_filter(arr, np.nanstd, size=size, mode="nearest")
+    """Lokale Standardabweichung mit NaN-handling (blockweise)."""
+    arr = np.nan_to_num(arr, nan=np.nanmean(arr))
+    return generic_filter(arr, np.nanstd, size=size, mode='nearest')
 
-def safe_save_to_drive(out_path, prof, data):
-    """Speichert Raster lokal in /content/tmp, dann Kopie auf Drive."""
-    os.makedirs("/content/tmp", exist_ok=True)
-    tmp_path = f"/content/tmp/{os.path.basename(out_path)}"
 
-    meta = prof.copy()
-    meta.update(dtype="float32", count=1, compress="lzw")
-    with rasterio.open(tmp_path, "w", **meta) as dst:
+def save_raster(out_path, profile, data):
+    """Speichert ein GeoTIFF im float32-Format."""
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    meta = profile.copy()
+    meta.update(dtype="float32", count=1, compress="lzw", BIGTIFF="IF_NEEDED")
+    with rasterio.open(out_path, "w", **meta) as dst:
         dst.write(data.astype("float32"), 1)
 
-    try:
-        shutil.copy(tmp_path, out_path)
-        print(f"  💾 Gespeichert → {out_path}")
-    except Exception as e:
-        print(f"⚠️ Fehler beim Kopieren auf Drive: {e}")
-        print("  Datei bleibt lokal in /content/tmp erhalten.")
+
+def compute_moran_geary(arr, downsample=5):
+    """Berechnet lokale Moran- & Geary-Werte auf einem Downsample."""
+    sub = arr[::downsample, ::downsample].astype("float64")
+    sub[np.isnan(sub)] = 0
+    w = lat2W(*sub.shape)
+    w.transform = "r"
+
+    moran = Moran_Local(sub.ravel(), w)
+    geary = Geary_Local(sub.ravel(), w)
+
+    moran_map = np.repeat(np.repeat(moran.Is.reshape(sub.shape), downsample, axis=0), downsample, axis=1)
+    geary_map = np.repeat(np.repeat(geary.Cs.reshape(sub.shape), downsample, axis=0), downsample, axis=1)
+
+    return moran_map[:arr.shape[0], :arr.shape[1]], geary_map[:arr.shape[0], :arr.shape[1]]
 
 
-def compute_moran(arr, w):
-    """Berechnet lokalen Moran."""
-    try:
-        moran = Moran_Local(arr.ravel(), w)
-        return moran.Is
-    except Exception as e:
-        print(f"⚠️ Moran fehlgeschlagen: {e}")
-        return np.zeros_like(arr.ravel())
-
-
-# === 🚀 Hauptfunktion ===
+# ------------------------------------------------------------
+# Hauptfunktion
+# ------------------------------------------------------------
 
 def generate_environmental_artefacts_fast(
-    std_size=11, downsample=5, resume=True, keepalive=True
+    base_dir=None,
+    single_file=None,
+    compute_std=True,
+    compute_moran=True,
+    compute_geary=True,
+    std_size=11,
+    downsample=5,
 ):
     """
-    Berechnet robuste STD- und Moran-Artefakte (Geary optional)
-    und speichert sicher auf Google Drive.
-
-    Args:
-        std_size (int): Fenstergröße für STD
-        downsample (int): Downsampling für Moran
-        resume (bool): Überspringe existierende Artefakte
-        keepalive (bool): Ausgabe alle 5 Min
+    Berechnet Umwelt-Artefakte (lokale STD, Moran, Geary)
+    - entweder für alle Raster im Ordner (base_dir)
+    - oder gezielt für eine einzelne Datei (single_file)
     """
 
-    dirs = cfg["data"]["raster_dirs"]
+    if single_file:
+        files = [single_file]
+    elif base_dir:
+        files = [os.path.join(base_dir, f) for f in os.listdir(base_dir)
+                 if f.endswith(".tif") and "_STD_" not in f and "_MORAN_" not in f and "_GEARY_" not in f]
+    else:
+        raise ValueError("Bitte base_dir oder single_file angeben!")
 
-    print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] 📊 Starte Artefaktlauf")
-    os.makedirs("/content/tmp", exist_ok=True)
+    print(f"\n📊 Starte Artefaktlauf ({len(files)} Raster)")
+    for i, path in enumerate(files, 1):
+        t0 = time.time()
+        base = os.path.basename(path)
+        prefix = base.split("_")[0]
+        month = "_".join(base.replace(".tif", "").split("_")[-2:])
 
-    for index, index_dir in dirs.items():
-        full_path = os.path.join(cfg["data"]["base_dir"], index_dir)
-        os.makedirs(full_path, exist_ok=True)
+        print(f"\n🧮 [{i}/{len(files)}] {base}")
+        with rasterio.open(path) as src:
+            arr = src.read(1).astype("float32")
+            prof = src.profile
+            arr[arr == src.nodata] = np.nan
 
-        files = sorted([
-            os.path.join(full_path, f) for f in os.listdir(full_path)
-            if f.endswith(".tif") and index in f and "_STD_" not in f and "_MORAN_" not in f
-        ])
-        print(f"\n📂 {index}: {len(files)} Raster ohne Artefakte")
-
-        for i, path in enumerate(files, 1):
-            base = os.path.basename(path)
-            month = base.split("_")[-2] + "_" + base.split("_")[-1].split(".")[0]
-            print(f"\n🧮 [{i}/{len(files)}] {base} @ {datetime.datetime.now():%H:%M:%S}")
-
-            with rasterio.open(path) as src:
-                arr = src.read(1).astype("float32")
-                prof = src.profile
-                arr[arr == src.nodata] = np.nan
-
-            out_std = os.path.join(full_path, f"{index}_STD_{month}.tif")
-            out_moran = os.path.join(full_path, f"{index}_MORAN_{month}.tif")
-
-            # === Resume: überspringen falls bereits vorhanden
-            if resume and os.path.exists(out_std) and os.path.exists(out_moran):
-                print("  ⏭️ Artefakte existieren, überspringe.")
-                continue
-
-            # === Lokale STD
-            t0 = time.time()
-            print("  ▶️ Berechne lokale STD ...")
+        if compute_std:
+            print("  ▶️ Berechne STD ...")
             std_map = local_std(arr, size=std_size)
-            safe_save_to_drive(out_std, prof, std_map)
-            print(f"  ✅ STD fertig in {time.time()-t0:.1f}s")
+            out_std = os.path.join(base_dir or os.path.dirname(path), f"{prefix}_STD_{month}.tif")
+            save_raster(out_std, prof, std_map)
+            print(f"     ✅ STD gespeichert: {os.path.basename(out_std)}")
 
-            # === Moran
-            print("  ▶️ Berechne lokalen Moran ...")
-            sub = arr[::downsample, ::downsample].astype("float64")
-            sub[np.isnan(sub)] = 0
-            w = lat2W(*sub.shape)
-            w.transform = "r"
-            moran_vals = compute_moran(sub, w)
-            moran_map = np.repeat(
-                np.repeat(moran_vals.reshape(sub.shape), downsample, axis=0),
-                downsample, axis=1
-            )[:arr.shape[0], :arr.shape[1]]
-            safe_save_to_drive(out_moran, prof, moran_map)
-            print(f"  ✅ MORAN fertig in {time.time()-t0:.1f}s")
+        if compute_moran or compute_geary:
+            print("  ▶️ Berechne Moran & Geary ...")
+            try:
+                moran_map, geary_map = compute_moran_geary(arr, downsample=downsample)
+                if compute_moran:
+                    out_moran = os.path.join(base_dir or os.path.dirname(path), f"{prefix}_MORAN_{month}.tif")
+                    save_raster(out_moran, prof, moran_map)
+                    print(f"     ✅ MORAN gespeichert: {os.path.basename(out_moran)}")
+                if compute_geary:
+                    out_geary = os.path.join(base_dir or os.path.dirname(path), f"{prefix}_GEARY_{month}.tif")
+                    save_raster(out_geary, prof, geary_map)
+                    print(f"     ✅ GEARY gespeichert: {os.path.basename(out_geary)}")
+            except Exception as e:
+                print(f"     ⚠️ Fehler bei Moran/Geary: {e}")
 
-            # === KeepAlive
-            if keepalive and (i % 1 == 0):
-                ram = psutil.virtual_memory().percent
-                print(f"  💾 RAM={ram}% | Zeit={datetime.datetime.now():%H:%M:%S}")
+        print(f"     ⏱️ Dauer: {time.time() - t0:.1f}s")
 
-    print(f"\n🏁 Fertig @ {datetime.datetime.now():%H:%M:%S}")
+    print("\n🏁 Lauf abgeschlossen.")
