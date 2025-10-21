@@ -67,7 +67,7 @@ def save_raster(out_path, profile, data):
 
     # Wertebereich auf [-1, 1] clippen, um float16 zu ermöglichen
     clipped = np.clip(data, -1, 1)
-    dtype = "float16" if np.nanmax(np.abs(clipped)) <= 1 else "float32"
+    dtype = "float32" if np.nanmax(np.abs(clipped)) <= 1 else "float32"
     compressed = clipped.astype(dtype)
 
     meta.update(
