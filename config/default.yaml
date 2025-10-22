@@ -46,7 +46,7 @@ gee:
 # ------------------------------------------------------------
 export:
   years: [2021, 2022, 2023, 2024, 2025]
-  months: [5, 6, 7, 8, 9]
+  months: [6, 7, 8, 9, 10, 11]
   region_bbox: [12.8, 52.2, 13.8, 52.7]  # Berlin + Umgebung (passend zu deinen Assets)
   artefacts_folder: "${paths.base_data_dir}/Artefacts"
 
