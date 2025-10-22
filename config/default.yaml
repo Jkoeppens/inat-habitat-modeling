@@ -1,29 +1,91 @@
+# ============================================================
+# 🌿 default.yaml – Projektweite Standardkonfiguration
+# Kompatibel mit config.py (Pfadstruktur unter "paths")
+# ============================================================
+
 project:
   name: inat-habitat-modeling
-  description: "Modellierung von Habitaten basierend auf iNaturalist + RS-Daten"
+  description: "Modellierung von Habitaten basierend auf iNaturalist + Fernerkundungsdaten"
   author: Jakob Koeppen
 
-data:
-  base_dir: "/content/drive/MyDrive/iNaturalist"
-  features_subdir: "features"
-  background_subdir: "background"
-  combined_subdir: "combined"
-  raster_dirs:
-    NDVI: "NDVI_Exports"
-    NDWI: "NDWI_Exports"
+# ------------------------------------------------------------
+# 📂 Pfade & Verzeichnisse
+# ------------------------------------------------------------
+paths:
+  base_data_dir: "/content/drive/MyDrive/iNaturalist"
+  ndvi_dir: "${paths.base_data_dir}/NDVI_Exports"
+  ndwi_dir: "${paths.base_data_dir}/NDWI_Exports"
+  output_dir: "${paths.base_data_dir}/outputs"
+  temp_dir: "/tmp/inat_pipeline"
+  features_dir: "${paths.base_data_dir}/features"
+  background_dir: "${paths.base_data_dir}/background"
+  combined_dir: "${paths.base_data_dir}/combined"
 
+# ------------------------------------------------------------
+# 🐸 iNaturalist-Einstellungen
+# ------------------------------------------------------------
 inat:
   default_taxon: clitocybe_nebularis
   default_taxon_id: 48596
   max_accuracy: 30
   bbox_default: [12.5, 51.5, 14.5, 53.5]
+  quality_grade: research
+  max_pages: 50
 
+# ------------------------------------------------------------
+# 🛰️ Google Earth Engine
+# ------------------------------------------------------------
+gee:
+  project_id: "inaturalist-474012"
+  scale: 10
+  max_pixels: 1e13
+  cloud_filter: 30
+
+# ------------------------------------------------------------
+# 📦 Exportkonfiguration
+# ------------------------------------------------------------
+export:
+  years: [2021, 2022, 2023, 2024, 2025]
+  months: [5, 6, 7, 8, 9]
+  region_bbox: [12.8, 52.2, 13.8, 52.7]  # Berlin + Umgebung (passend zu deinen Assets)
+  artefacts_folder: "${paths.base_data_dir}/Artefacts"
+
+# ------------------------------------------------------------
+# 🧮 Feature-Extraktion & Analyse
+# ------------------------------------------------------------
 feature_extraction:
   lag_months: 1
   buffer_m: 100
   use_artifacts: true
-  include_metrics: [NDVI, NDWI, NDVI_STD, NDWI_STD, NDVI_MORAN, NDWI_MORAN, NDVI_GEARY, NDWI_GEARY]
+  include_metrics:
+    - NDVI
+    - NDWI
+    - NDVI_STD
+    - NDWI_STD
+    - NDVI_MORAN
+    - NDWI_MORAN
+    - NDVI_GEARY
+    - NDWI_GEARY
 
+artefacts:
+  std_kernel_size: 11
+  subsample_step: 5
+
+# ------------------------------------------------------------
+# 🏷️ Labeling & Output
+# ------------------------------------------------------------
 labels:
   fund: 1
   background: 0
+
+outputs:
+  enriched_csv_suffix: "_features.csv"
+  env_matched_csv_suffix: "_env_matched.csv"
+  full_output_suffix: "_env_full.csv"
+
+# ------------------------------------------------------------
+# ⚙️ Debug & Logging
+# ------------------------------------------------------------
+debug:
+  verbose: true
+  dry_run: false
