@@ -81,7 +81,7 @@ def load_config(
             config = deep_merge(config, local)
 
     # Platzhalter (z. B. ${paths.base_data_dir}) rekursiv auflösen
-    config = resolve_placeholders(config)
+    config = resolve_placeholders(config, config)
     return config
 
 
